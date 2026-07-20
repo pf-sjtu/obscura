@@ -1,7 +1,24 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::{Duration, Instant};
 
 const OBSCURA: &str = env!("CARGO_BIN_EXE_obscura");
+
+/// Wait until `child` exits, or kill and panic after `timeout`.
+fn wait_exit(child: &mut Child, timeout: Duration) -> std::process::ExitStatus {
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            return status;
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("child did not exit within {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 // ── minimal MCP client ────────────────────────────────────────────────────────
 
@@ -192,6 +209,100 @@ fn test_notifications_are_silent() {
     // consume that stray response and the ping result would be mismatched.
     let resp = c.call("ping", serde_json::json!({}));
     assert!(resp.get("error").is_none());
+}
+
+/// Plan A: host closes stdin → server must exit promptly (not hang).
+#[test]
+fn test_stdin_eof_exits_cleanly() {
+    let mut child = Command::new(OBSCURA)
+        .args(["mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn obscura mcp");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+
+    // Minimal initialize so the server is in the main loop.
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "eof-test", "version": "0.0.0" }
+        }
+    });
+    let mut body = serde_json::to_string(&init).unwrap();
+    body.push('\n');
+    stdin.write_all(body.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read initialize response");
+    assert!(line.contains("obscura-mcp"), "unexpected init response: {line}");
+
+    // Plan A trigger: close stdin (EOF).
+    drop(stdin);
+
+    let status = wait_exit(&mut child, Duration::from_secs(5));
+    assert!(
+        status.success(),
+        "expected clean exit after stdin EOF, got {status}"
+    );
+}
+
+/// Plan C: shutdown notification must end the process (no further RPC).
+#[test]
+fn test_shutdown_notification_exits() {
+    let mut child = Command::new(OBSCURA)
+        .args(["mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn obscura mcp");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "shutdown-test", "version": "0.0.0" }
+        }
+    });
+    let mut body = serde_json::to_string(&init).unwrap();
+    body.push('\n');
+    stdin.write_all(body.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read initialize response");
+
+    let shutdown = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/shutdown",
+        "params": {}
+    });
+    let mut body = serde_json::to_string(&shutdown).unwrap();
+    body.push('\n');
+    stdin.write_all(body.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    let status = wait_exit(&mut child, Duration::from_secs(5));
+    assert!(
+        status.success(),
+        "expected clean exit after shutdown notification, got {status}"
+    );
 }
 
 #[test]

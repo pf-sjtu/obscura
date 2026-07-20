@@ -4,6 +4,7 @@
 #![recursion_limit = "512"]
 
 pub mod http;
+mod stdio_lifecycle;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +15,10 @@ use obscura_dom::NodeId;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+use stdio_lifecycle::{
+    arm_hard_exit, is_shutdown_method, spawn_parent_death_watch, HARD_EXIT_AFTER,
+};
 
 /// Cap on text returned to the agent unless the caller passes a larger
 /// `max_chars`. Agents waste context on multi-KB raw page dumps; this
@@ -206,12 +211,39 @@ pub async fn run(proxy: Option<String>, user_agent: Option<String>, stealth: boo
 
     let mut state = BrowserState::new(proxy, user_agent, stealth);
 
+    // Plan B: exit if the host process dies without closing stdio cleanly.
+    let mut parent_watch = spawn_parent_death_watch();
+
     loop {
         // MCP stdio transport: newline-delimited JSON (one message per line)
         let mut line = String::new();
-        let n = reader.read_line(&mut line).await?;
+        let n = {
+            let read_fut = reader.read_line(&mut line);
+            match parent_watch.as_mut() {
+                Some(watch) => {
+                    tokio::select! {
+                        biased;
+                        res = read_fut => res?,
+                        _ = watch => {
+                            tracing::warn!(
+                                "obscura-mcp: parent process exited; shutting down stdio server"
+                            );
+                            eprintln!(
+                                "obscura-mcp: parent process exited; shutting down stdio server"
+                            );
+                            return graceful_stdio_shutdown(state);
+                        }
+                    }
+                }
+                None => read_fut.await?,
+            }
+        };
+
+        // Plan A: stdin EOF (host closed the pipe) → clean up with hard-exit watchdog.
         if n == 0 {
-            return Ok(());
+            tracing::info!("obscura-mcp: stdin EOF; shutting down stdio server");
+            eprintln!("obscura-mcp: stdin EOF; shutting down stdio server");
+            return graceful_stdio_shutdown(state);
         }
 
         let trimmed = line.trim();
@@ -224,9 +256,36 @@ pub async fn run(proxy: Option<String>, user_agent: Option<String>, stealth: boo
             Err(_) => continue,
         };
 
-        // Notifications (no id) need no response
+        // Plan C: notifications (no id) — usually silent; shutdown methods exit.
         if msg.id.is_none() {
+            if is_shutdown_method(&msg.method) {
+                tracing::info!(
+                    method = %msg.method,
+                    "obscura-mcp: shutdown notification; exiting"
+                );
+                eprintln!(
+                    "obscura-mcp: shutdown notification ({}); exiting",
+                    msg.method
+                );
+                return graceful_stdio_shutdown(state);
+            }
             continue;
+        }
+
+        // Plan C: shutdown as a request — ack then exit.
+        if is_shutdown_method(&msg.method) {
+            let id = msg.id.clone().unwrap_or(Value::Null);
+            let response = RpcResponse::ok(id, json!({}));
+            let mut body = serde_json::to_string(&response)?;
+            body.push('\n');
+            let _ = writer.write_all(body.as_bytes()).await;
+            let _ = writer.flush().await;
+            tracing::info!(
+                method = %msg.method,
+                "obscura-mcp: shutdown request; exiting"
+            );
+            eprintln!("obscura-mcp: shutdown request ({}); exiting", msg.method);
+            return graceful_stdio_shutdown(state);
         }
 
         let id = msg.id.clone().unwrap_or(Value::Null);
@@ -237,6 +296,15 @@ pub async fn run(proxy: Option<String>, user_agent: Option<String>, stealth: boo
         writer.write_all(body.as_bytes()).await?;
         writer.flush().await?;
     }
+}
+
+/// Release browser state and guarantee process exit even if Drop hangs.
+fn graceful_stdio_shutdown(mut state: BrowserState) -> Result<()> {
+    arm_hard_exit(HARD_EXIT_AFTER);
+    // Prefer explicit tab/isolate teardown before Drop (LIFO isolate rule #258).
+    let _ = tool_close(&mut state);
+    drop(state);
+    Ok(())
 }
 
 fn handle_initialize(id: Value, params: &Value) -> RpcResponse {

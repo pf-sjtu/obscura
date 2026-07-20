@@ -26,6 +26,22 @@ With stealth and proxy:
 obscura mcp --stealth --proxy http://proxy.example.com:8080
 ```
 
+## Stdio lifecycle (exit behaviour)
+
+The stdio MCP server is designed to leave the process as soon as the host is done:
+
+| Trigger | Behaviour |
+|---|---|
+| Host closes stdin (EOF) | Close browser tabs, then exit (hard-exit watchdog after 1s if cleanup stalls) |
+| Host process dies | Parent-process watch detects it and exits (same cleanup path) |
+| `notifications/shutdown`, `notifications/exit`, or request `shutdown` / `exit` | Ack (for requests), then same cleanup path |
+
+Disable parent watch when attaching a debugger or reparenting the process:
+
+```bash
+OBSCURA_MCP_NO_PARENT_WATCH=1 obscura mcp
+```
+
 ## Security
 
 The HTTP transport has no built-in auth, so anyone who can reach the port can drive the browser. Two guards ship for the HTTP transport:
