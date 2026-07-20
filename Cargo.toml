@@ -54,3 +54,6 @@ base64 = "0.22"
 # would turn every catchable op panic into a hard crash.
 [profile.release]
 panic = "unwind"
+
+[patch.crates-io]
+btls-sys = { path = "crates/vendor/btls-sys-0.5.6" }

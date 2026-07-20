@@ -4,12 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [build-dependencies]
-deno_core = "0.350"
+deno_core = "0.404"
 
 [dependencies]
 obscura-dom = { workspace = true }
 obscura-net = { workspace = true }
-deno_core = "0.350"
+deno_core = "0.404"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -19,7 +19,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 html5ever = { workspace = true }
-deno_error = "0.6"
+deno_error = "0.7"
 base64 = { workspace = true }
 sha1 = "0.10"
 sha2 = "0.10"

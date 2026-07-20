@@ -5,8 +5,9 @@ use deno_core::ModuleLoadResponse;
 use deno_core::ModuleLoader;
 use deno_core::ModuleSource;
 use deno_core::ModuleSourceCode;
+use deno_core::ModuleLoadOptions;
+use deno_core::ModuleLoadReferrer;
 use deno_core::ModuleSpecifier;
-use deno_core::RequestedModuleType;
 
 pub struct ObscuraModuleLoader {
     pub base_url: String,
@@ -30,7 +31,7 @@ impl ObscuraModuleLoader {
 }
 
 fn io_err(msg: String) -> ModuleLoaderError {
-    std::io::Error::new(std::io::ErrorKind::Other, msg).into()
+    ModuleLoaderError::generic(msg)
 }
 
 impl ModuleLoader for ObscuraModuleLoader {
@@ -50,15 +51,15 @@ impl ModuleLoader for ObscuraModuleLoader {
             referrer
         };
 
-        deno_core::resolve_import(specifier, base).map_err(|e| e.into())
+        deno_core::resolve_import(specifier, base)
+            .map_err(|e| ModuleLoaderError::generic(e.to_string()))
     }
 
     fn load(
         &self,
         module_specifier: &ModuleSpecifier,
-        _maybe_referrer: Option<&ModuleSpecifier>,
-        _is_dyn_import: bool,
-        _requested_module_type: RequestedModuleType,
+        _maybe_referrer: Option<&ModuleLoadReferrer>,
+        _options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
         let url = module_specifier.to_string();
         // Capture the loader's proxy here so the async closure below owns a

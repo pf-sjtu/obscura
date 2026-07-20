@@ -45,7 +45,8 @@ The server keeps a live browser session, so tools operate on the current page ra
 
 Navigation and lifecycle:
 
-- `browser_navigate`, `browser_back`, `browser_forward`, `browser_reload`, `browser_close`
+- `browser_navigate`, `browser_back`, `browser_forward`, `browser_reload`, `browser_settle`, `browser_close`
+- `browser_navigate` accepts optional `settleMs` to pump the page event loop after navigation for SPA first paint and framework schedulers.
 
 Read the page:
 
@@ -61,6 +62,8 @@ Interact:
 Wait and run JS:
 
 - `browser_wait_for`, `browser_wait_for_text`, `browser_evaluate`
+- `browser_wait_for` and `browser_wait_for_text` pump short event-loop slices while polling, so asynchronous DOM/text updates from timers, promises, and SPA schedulers can commit.
+- `browser_evaluate` accepts optional `awaitPromise` to await a returned Promise and optional `settleMs` to pump the event loop after the expression runs.
 
 Diagnostics:
 

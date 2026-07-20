@@ -1098,7 +1098,13 @@ impl ObscuraJsRuntime {
         &mut self,
         result: deno_core::v8::Global<deno_core::v8::Value>,
     ) -> Result<serde_json::Value, String> {
-        let scope = &mut self.runtime.handle_scope();
+        // deno_core 0.404 removed JsRuntime::handle_scope; its canonical
+        // replacement is the exported `scope!` macro, which enters the main
+        // realm's context (main_context + isolate + ContextScope) exactly the
+        // way deno_core's own &mut self methods do. Using it guarantees the
+        // Global<Value> from execute_script is localized in the same realm it
+        // was produced in.
+        deno_core::scope!(scope, self.runtime);
         let local = deno_core::v8::Local::new(scope, result);
 
         if local.is_undefined() || local.is_null() {
@@ -1250,10 +1256,14 @@ mod tests {
 
     fn setup_runtime(html: &str) -> ObscuraJsRuntime {
         let dom = parse_html(html);
-        let rt = ObscuraJsRuntime::new();
+        let mut rt = ObscuraJsRuntime::new();
         rt.set_dom(dom);
         rt.set_url("http://example.com/test");
         rt.set_title("Test Page");
+        // Build `document` and the per-page globals. Since 56ab54e new() no
+        // longer auto-runs __obscura_init(); callers must invoke run_page_init()
+        // after the set_* calls (production does this in the page pipeline).
+        rt.run_page_init();
         rt
     }
 
@@ -1779,6 +1789,7 @@ mod tests {
             rt1b.set_url("http://example.com");
             rt1b.set_title("Page1");
             let mut rt1b = rt1b;
+            rt1b.run_page_init();
             let title1b = rt1b.evaluate("document.querySelector('h1').textContent").unwrap();
             assert_eq!(title1b, serde_json::json!("Page1"));
         }
@@ -1842,11 +1853,12 @@ mod tests {
     fn setup_runtime_with_cookies(html: &str) -> (ObscuraJsRuntime, std::sync::Arc<obscura_net::CookieJar>) {
         let dom = obscura_dom::parse_html(html);
         let jar = std::sync::Arc::new(obscura_net::CookieJar::new());
-        let rt = ObscuraJsRuntime::new();
+        let mut rt = ObscuraJsRuntime::new();
         rt.set_dom(dom);
         rt.set_url("http://example.com/test");
         rt.set_title("Test Page");
         rt.set_cookie_jar(jar.clone());
+        rt.run_page_init();
         (rt, jar)
     }
 

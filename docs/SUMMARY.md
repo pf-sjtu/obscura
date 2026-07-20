@@ -17,6 +17,7 @@
 * [Use with Puppeteer](Use-with-Puppeteer.md)
 * [Use with Playwright](Use-with-Playwright.md)
 * [Use the MCP server](Use-the-MCP-server.md)
+* [Configure the MCP server in Claude Code](Configure-Claude-Code-MCP.md)
 * [Use as a Rust library](Use-as-a-Rust-library.md)
 * [Persist cookies and storage](Persist-cookies-and-storage.md)
 * [Intercept and modify requests](Intercept-and-modify-requests.md)
