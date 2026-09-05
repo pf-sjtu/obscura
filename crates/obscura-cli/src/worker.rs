@@ -1,3 +1,4 @@
+
 use std::sync::Arc;
 
 use obscura_browser::{BrowserContext, Page};
@@ -32,18 +33,10 @@ struct WorkerResponse {
 
 impl WorkerResponse {
     fn success(result: serde_json::Value) -> Self {
-        WorkerResponse {
-            ok: true,
-            result: Some(result),
-            error: None,
-        }
+        WorkerResponse { ok: true, result: Some(result), error: None }
     }
     fn error(msg: String) -> Self {
-        WorkerResponse {
-            ok: false,
-            result: None,
-            error: Some(msg),
-        }
+        WorkerResponse { ok: false, result: None, error: Some(msg) }
     }
 }
 
@@ -58,11 +51,15 @@ async fn main() {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let context = Arc::new(BrowserContext::with_options(
-        "worker".to_string(),
-        proxy,
-        false,
-    ));
+    let stealth = std::env::var("OBSCURA_STEALTH")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    let obey_robots = std::env::var("OBSCURA_OBEY_ROBOTS")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    let mut context = BrowserContext::with_options("worker".to_string(), proxy, stealth);
+    context.obey_robots = obey_robots;
+    let context = Arc::new(context);
     let mut page = Page::new("page-1".to_string(), context);
 
     let stdin = tokio::io::stdin();
@@ -99,40 +96,55 @@ async fn main() {
         };
 
         let resp = match cmd {
-            WorkerCommand::Navigate { url } => match page.navigate(&url).await {
-                Ok(()) => WorkerResponse::success(serde_json::json!({
-                    "title": page.title,
-                    "url": page.url_string(),
-                })),
-                Err(e) => WorkerResponse::error(e.to_string()),
-            },
+            WorkerCommand::Navigate { url } => {
+                match page.navigate(&url).await {
+                    Ok(()) => WorkerResponse::success(serde_json::json!({
+                        "title": page.title,
+                        "url": page.url_string(),
+                    })),
+                    Err(e) => WorkerResponse::error(e.to_string()),
+                }
+            }
             WorkerCommand::Evaluate { expression } => {
-                let result = page.evaluate(&expression);
+                // Await promise-returning expressions so async IIFEs resolve
+                // before serialization. Previously the sync path serialized an
+                // unresolved Promise as `{}`, making single-invocation flows
+                // that call async app APIs impossible (issue #693). A 30s cap
+                // matches the CDP await timeout so a never-settling promise
+                // cannot hang the worker.
+                let result = match page
+                    .evaluate_for_cdp_with_timeout(&expression, true, true, 30_000)
+                    .await
+                {
+                    Ok(info) => match info.value {
+                        Some(v) => v,
+                        None => serde_json::Value::String(info.description),
+                    },
+                    Err(_) => serde_json::Value::Null,
+                };
                 WorkerResponse::success(result)
             }
-            WorkerCommand::Title => WorkerResponse::success(serde_json::json!(page.title)),
+            WorkerCommand::Title => {
+                WorkerResponse::success(serde_json::json!(page.title))
+            }
             WorkerCommand::DumpHtml => {
-                let html = page
-                    .with_dom(|dom| {
-                        if let Ok(Some(html_node)) = dom.query_selector("html") {
-                            dom.outer_html(html_node)
-                        } else {
-                            dom.inner_html(dom.document())
-                        }
-                    })
-                    .unwrap_or_default();
+                let html = page.with_dom(|dom| {
+                    if let Ok(Some(html_node)) = dom.query_selector("html") {
+                        dom.outer_html(html_node)
+                    } else {
+                        dom.inner_html(dom.document())
+                    }
+                }).unwrap_or_default();
                 WorkerResponse::success(serde_json::json!(html))
             }
             WorkerCommand::DumpText => {
-                let text = page
-                    .with_dom(|dom| {
-                        if let Ok(Some(body)) = dom.query_selector("body") {
-                            dom.text_content(body)
-                        } else {
-                            String::new()
-                        }
-                    })
-                    .unwrap_or_default();
+                let text = page.with_dom(|dom| {
+                    if let Ok(Some(body)) = dom.query_selector("body") {
+                        dom.text_content(body)
+                    } else {
+                        String::new()
+                    }
+                }).unwrap_or_default();
                 WorkerResponse::success(serde_json::json!(text))
             }
             WorkerCommand::Shutdown => {

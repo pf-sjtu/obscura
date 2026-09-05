@@ -61,12 +61,12 @@ The server keeps a live browser session, so tools operate on the current page ra
 
 Navigation and lifecycle:
 
-- `browser_navigate`, `browser_back`, `browser_forward`, `browser_reload`, `browser_settle`, `browser_close`
-- `browser_navigate` accepts optional `settleMs` to pump the page event loop after navigation for SPA first paint and framework schedulers.
+- `browser_navigate`, `browser_back`, `browser_forward`, `browser_reload`, `browser_close`
 
 Read the page:
 
-- `browser_snapshot`: accessibility/DOM snapshot of the current page.
+- `browser_snapshot`: current URL, title, readable body text, and interactive
+  element references. Optional `max_chars` limits the returned text.
 - `browser_markdown`, `browser_links`, `browser_extract`: page as markdown, link list, or structured content.
 - `browser_interactive_elements`, `browser_detect_forms`: actionable elements and form fields.
 - `browser_get_attribute`, `browser_count`, `browser_search`: read an attribute, count matches, find text.
@@ -79,11 +79,20 @@ Wait and run JS:
 
 - `browser_wait_for`, `browser_wait_for_text`, `browser_evaluate`
 - `browser_wait_for` and `browser_wait_for_text` pump short event-loop slices while polling, so asynchronous DOM/text updates from timers, promises, and SPA schedulers can commit.
-- `browser_evaluate` accepts optional `awaitPromise` to await a returned Promise and optional `settleMs` to pump the event loop after the expression runs.
 
 Diagnostics:
 
 - `browser_network_requests`, `browser_console_messages`
+
+Visual output (render-enabled builds):
+
+- `browser_screenshot`: current viewport as an MCP `image/png` content block.
+- `browser_pdf`: current page as an embedded `application/pdf` resource.
+
+`browser_screenshot` accepts optional positive `width` and `height` values in
+CSS pixels and enforces a bounded capture size. `browser_pdf` accepts
+`landscape`, `print_background`, `scale`, paper width/height, and top, bottom,
+left, and right margins. Paper dimensions and margins are measured in inches.
 
 Cookies and storage:
 
@@ -92,6 +101,13 @@ Cookies and storage:
 Tabs:
 
 - `browser_tab_new`, `browser_tab_list`, `browser_tab_switch`, `browser_tab_close`
+
+Element references describe the current rendered page state and can become
+stale after navigation, interaction, scrolling, or a framework rerender. Take
+a fresh snapshot or interactive-element listing before acting again.
+
+MCP exposes still-image and PDF output. It does not stream video frames; use
+CDP `Page.startScreencast` for activity-driven screencasting.
 
 ## Claude Desktop
 
