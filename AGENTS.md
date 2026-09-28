@@ -35,6 +35,24 @@ CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo build --release -p obscura-cli --bi
 - If the vendored OpenSSL build hits an AVX-512 assembler error on your host,
   build with `OPENSSL_NO_VENDOR=1`.
 
+### Windows ARM64 host build preference
+
+This repo is developed on Windows 11 on ARM (aarch64-pc-windows-msvc). On this
+host:
+
+- Use the **prebuilt V8 binary** (`rusty_v8` release archive); do NOT set
+  `V8_FROM_SOURCE` and do not compile V8 locally. The reason deno_core was
+  upgraded to 0.412 / V8 150.4 is aarch64 Windows support.
+- Initialize the MSVC ARM64 environment first:
+  `call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsarm64.bat"`
+  (see `tmp/release-build*.bat` for the working invocation).
+- Build with `--features render,stealth` (screenshot/pdf + wreq transport).
+- Keep the `btls-sys = { path = "crates/vendor/btls-sys-0.5.6" }` patch in
+  `Cargo.toml`; the vendored copy fixes the BoringSSL build on this host and
+  is git-ignored.
+- Deploy by pointing `C:\Users\PC\bin\obscura.exe` (a symlink) at
+  `target\release\obscura.exe`.
+
 ## Test
 
 Run tests with **`cargo nextest`, not `cargo test`**:
