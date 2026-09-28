@@ -395,7 +395,8 @@ fn handle_tools_list(id: Value) -> RpcResponse {
                             "type": "string",
                             "enum": ["load", "domcontentloaded", "networkidle0"],
                             "description": "Navigation wait condition (default: load)"
-                        }
+                        },
+                        "settleMs": { "type": "number", "description": "After navigation, pump the JS event loop for up to this many milliseconds" }
                     },
                     "required": ["url"]
                 }
@@ -478,9 +479,21 @@ fn handle_tools_list(id: Value) -> RpcResponse {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "expression": { "type": "string", "description": "JavaScript expression to evaluate" }
+                        "expression": { "type": "string", "description": "JavaScript expression to evaluate" },
+                        "awaitPromise": { "type": "boolean", "description": "If true, wait for a returned Promise to settle before returning" },
+                        "settleMs": { "type": "number", "description": "After evaluation, pump the JS event loop for up to this many milliseconds" }
                     },
                     "required": ["expression"]
+                }
+            },
+            {
+                "name": "browser_settle",
+                "description": "Pump the page JavaScript event loop so timers, microtasks, fetch callbacks, and framework schedulers can run",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "max_ms": { "type": "number", "description": "Maximum time to pump the event loop in milliseconds (default: 1000)" }
+                    }
                 }
             },
             {
@@ -833,6 +846,7 @@ async fn handle_tool_call(id: Value, params: &Value, state: &mut BrowserState) -
         "browser_press_key" => tool_press_key(args, state).await,
         "browser_select_option" => tool_select_option(args, state),
         "browser_evaluate" => tool_evaluate(args, state).await,
+        "browser_settle" => tool_settle(args, state).await,
         "browser_wait_for" => tool_wait_for(args, state).await,
         "browser_network_requests" => tool_network_requests(state),
         "browser_console_messages" => tool_console_messages(state),
@@ -1010,6 +1024,7 @@ async fn tool_navigate(args: &Value, state: &mut BrowserState) -> Result<String,
         return Err("file:// navigation is disabled for MCP".to_string());
     }
     let wait_until = args.get("waitUntil").and_then(Value::as_str).unwrap_or("load");
+    let settle_ms = bounded_millis_arg(args, "settleMs", 0, 30_000);
 
     let condition = obscura_browser::lifecycle::WaitUntil::from_str(wait_until);
     let ua = state.user_agent.clone();
@@ -1020,8 +1035,20 @@ async fn tool_navigate(args: &Value, state: &mut BrowserState) -> Result<String,
 
     page.navigate_with_wait(url, condition).await
         .map_err(|e| e.to_string())?;
+    if settle_ms > 0 {
+        page.settle(settle_ms).await;
+    }
 
-    let summary = format!("Navigated to {} — \"{}\"", page.url_string(), page.title);
+    let summary = if settle_ms > 0 {
+        format!(
+            "Navigated to {} — \"{}\" (settled {}ms)",
+            page.url_string(),
+            page.title,
+            settle_ms
+        )
+    } else {
+        format!("Navigated to {} — \"{}\"", page.url_string(), page.title)
+    };
     // DOM changed — invalidate the ref table. Next snapshot will rebuild.
     state.interactive_refs.clear();
     Ok(summary)
@@ -1193,14 +1220,56 @@ fn tool_select_option(args: &Value, state: &mut BrowserState) -> Result<String, 
 async fn tool_evaluate(args: &Value, state: &mut BrowserState) -> Result<String, String> {
     let expression = args.get("expression").and_then(Value::as_str)
         .ok_or("Missing expression parameter")?;
+    let await_promise = args
+        .get("awaitPromise")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let settle_ms = bounded_millis_arg(args, "settleMs", 0, 30_000);
 
-    let result = state.page_mut().evaluate(expression);
+    let result = if await_promise {
+        let info = state
+            .page_mut()
+            .evaluate_for_cdp(expression, true, true)
+            .await;
+        info.value.unwrap_or_else(|| {
+            if !info.description.is_empty() {
+                Value::String(info.description)
+            } else {
+                Value::String(info.js_type)
+            }
+        })
+    } else {
+        state.page_mut().evaluate(expression)
+    };
+
+    if settle_ms > 0 {
+        state.page_mut().settle(settle_ms).await;
+    }
     state.settle_synthetic_navigation().await?;
-    Ok(match &result {
+    Ok(format_value(&result))
+}
+
+async fn tool_settle(args: &Value, state: &mut BrowserState) -> Result<String, String> {
+    let max_ms = bounded_millis_arg(args, "max_ms", 1000, 30_000);
+    state.page_mut().settle(max_ms).await;
+    Ok(format!("Settled page event loop for up to {max_ms}ms"))
+}
+
+fn bounded_millis_arg(args: &Value, name: &str, default: u64, max: u64) -> u64 {
+    args.get(name)
+        .and_then(Value::as_f64)
+        .filter(|n| n.is_finite() && *n >= 0.0)
+        .map(|n| n.round() as u64)
+        .unwrap_or(default)
+        .min(max)
+}
+
+fn format_value(result: &Value) -> String {
+    match result {
         Value::String(s) => s.clone(),
         Value::Null => "null".to_string(),
         other => serde_json::to_string_pretty(other).unwrap_or_default(),
-    })
+    }
 }
 
 async fn tool_wait_for(args: &Value, state: &mut BrowserState) -> Result<String, String> {
