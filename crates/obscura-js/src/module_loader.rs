@@ -12,6 +12,8 @@ use deno_core::ModuleSource;
 use deno_core::ModuleSourceCode;
 use deno_core::ModuleSpecifier;
 
+use deno_error::JsErrorBox;
+
 use crate::import_map::ImportMap;
 use crate::ops::ObscuraState;
 
@@ -147,7 +149,7 @@ impl ObscuraModuleLoader {
 }
 
 fn io_err(msg: String) -> ModuleLoaderError {
-    deno_error::JsErrorBox::generic(msg)
+    JsErrorBox::from_err(std::io::Error::new(std::io::ErrorKind::Other, msg))
 }
 
 impl ModuleLoader for ObscuraModuleLoader {
@@ -190,8 +192,6 @@ impl ModuleLoader for ObscuraModuleLoader {
         maybe_referrer: Option<&ModuleLoadReferrer>,
         options: ModuleLoadOptions,
     ) -> ModuleLoadResponse {
-        let is_dyn_import = options.is_dynamic_import;
-        let _requested_module_type = options.requested_module_type;
         let url = module_specifier.to_string();
         // Module-graph CORS and same-origin credentials are relative to the
         // owning document, not to the importing module. The importer remains
@@ -201,7 +201,7 @@ impl ModuleLoader for ObscuraModuleLoader {
         let document_url = ModuleSpecifier::parse(&self.base_url)
             .unwrap_or_else(|_| module_specifier.clone());
         let referrer = maybe_referrer
-            .map(|r| r.specifier.clone())
+            .map(|referrer| referrer.specifier.clone())
             .unwrap_or_else(|| document_url.clone());
         // Capture the loader's proxy here so the async closure below owns a
         // plain Option<String> rather than borrowing &self across an `await`.
@@ -213,6 +213,7 @@ impl ModuleLoader for ObscuraModuleLoader {
         // runtime between deno_core accepting the load and first polling it.
         // Keeping the guard inside the future makes cancellation/navigation
         // decrement the count through Drop as well as success and failure.
+        let is_dyn_import = options.is_dynamic_import;
         let activity_guard = is_dyn_import.then(|| activity.begin());
         let page_network = match self.page_state.as_ref() {
             Some(weak) => (|| {
@@ -252,7 +253,7 @@ impl ModuleLoader for ObscuraModuleLoader {
         };
 
         ModuleLoadResponse::Async(Pin::from(Box::new(async move {
-            // deno_core propagates `is_dyn_import` to every dependency edge in
+            // deno_core propagates `is_dynamic_import` to every dependency edge in
             // the recursive graph, so this excludes parser-discovered/static
             // graphs without losing descendant fetches of a lazy graph.
             let _activity_guard = activity_guard;

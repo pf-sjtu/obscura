@@ -30,7 +30,7 @@ Obscura is a headless browser engine written in Rust, built for web scraping and
 | Metric       | Obscura      | Headless Chrome |
 |--------------|--------------|------------------|
 | Memory       | **30 MB**    | 200+ MB          |
-| Binary size  | **70 MB**    | 300+ MB          |
+| Binary size  | **~70 MiB**  | 300+ MB          |
 | Anti-detect  | **Built-in** | None          |
 | Page load    | **85 ms**    | ~500 ms          |
 | Startup      | **Instant**  | ~2s              |
@@ -80,13 +80,13 @@ Want to sponsor? Email [hello@obscura.sh](mailto:hello@obscura.sh).
 <table>
    <tr>
     <td width="200" align="center" valign="middle">
-      <a href="https://go.nodemaven.com/obscuraRMaugust" target="_blank">
-        <img alt="NodeMaven" src="assets/sponsors/nodemaven2.png" width="180"/>
+      <a href="https://go.nodemaven.com/obscurareadmeseptember2026" target="_blank">
+        <img alt="NodeMaven" src="assets/sponsors/nodemaven3.png" width="180"/>
       </a>
     </td>
     <td valign="middle">
-      <a href="https://go.nodemaven.com/obscuraRMaugust" target="_blank"><b>NodeMaven</b></a>: The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.<br><br>
-      <b>Why <a href="https://go.nodemaven.com/obscuraRMaugust" target="_blank">NodeMaven</a>?</b><br>
+      <a href="https://go.nodemaven.com/obscurareadmeseptember2026" target="_blank"><b>NodeMaven</b></a>: The most efficient proxy provider for Web Scraping and Automation with the Highest Quality IP on the market.<br><br>
+      <b>Why <a href="https://go.nodemaven.com/obscurareadmeseptember2026" target="_blank">NodeMaven</a>?</b><br>
       ZIP targeting<br>
       99.9% uptime<br>
       IP filtering: all proxies have fraud score &lt;97%<br>
@@ -96,25 +96,27 @@ Want to sponsor? Email [hello@obscura.sh](mailto:hello@obscura.sh).
       <b>OBSCURA35</b> - 35% off to Mobile and Residential Proxies<br>
       <b>OBSCURA40</b> - 40% off to ISP (Static) Proxies
     </td>
-  </tr>
-  <tr>
-    <td width="200" align="center" valign="middle">
-      <a href="https://proxyempire.io/?ref=obscura&utm_source=obscuragithub" target="_blank">
-        <img alt="ProxyEmpire" src="assets/sponsors/proxyempire.png" width="180"/>
-      </a>
-    </td>
-    <td valign="middle">
-      🚀 <b>Obscura × ProxyEmpire</b><br>
-      Using Obscura for AI agents, browser automation, or web scraping? Power it with reliable residential and mobile proxies from <a href="https://proxyempire.io/?ref=obscura&utm_source=obscuragithub"><b>ProxyEmpire</b></a>.<br><br>
-      <b>🌍 30M+ residential IPs in 170+ countries<br>
+ <tr>
+  <td width="200" align="center" valign="middle">
+    <a href="https://proxyempire.io/?ref=obscura&utm_source=obscuragithub" target="_blank">
+      <img alt="ProxyEmpire" src="assets/sponsors/proxyempire.png" width="180"/>
+    </a>
+  </td>
+  <td valign="middle">
+    🚀 <b>Obscura × ProxyEmpire</b><br>
+    Using Obscura for AI agents, browser automation, or web scraping? Power it with reliable residential and mobile proxies from <a href="https://proxyempire.io/?ref=obscura&utm_source=obscuragithub"><b>ProxyEmpire</b></a>.<br><br>
+    <b>
+      🌍 30M+ residential IPs in 170+ countries<br>
       📱 4G/5G mobile proxies<br>
       🔄 Rotating & sticky sessions<br>
       🎯 City, region & ISP targeting<br>
       🔐 HTTP, HTTPS & SOCKS5 support<br><br>
-      🎁 Use code <b>OBSCURA35</b> for a <b>35% recurring discount</b>.<br><br></b>
-      Better proxies. Fewer blocks. More scalable automation.
-    </td>
- <tr>
+      🎁 Use code <b>OBSCURA35</b> for a <b>35% recurring discount</b>.<br><br>
+    </b>
+    Better proxies. Fewer blocks. More scalable automation.
+  </td>
+</tr>
+   </tr>
     <td width="200" align="center" valign="middle">
       <a href="https://niuproxy.com/?utm_source=obscura&utm_medium=obscura&ref=obscura" target="_blank">
         <img alt="NiuProxy" src="assets/sponsors/niuproxlogo.png" width="180"/>
@@ -123,6 +125,21 @@ Want to sponsor? Email [hello@obscura.sh](mailto:hello@obscura.sh).
     <td valign="middle">
       <a href="https://niuproxy.com/?utm_source=obscura&utm_medium=obscura&ref=obscura"><b>NiuProxy</b></a> Rotating Residential Proxies — Special Offer: 10TB at $0.35/GB | 1TB at $0.50/GB.<br><br>
       🎁 Use code <b>PAY2</b> for <b>10% off</b> your recharge.
+    </td>  
+</tr>
+    <tr>
+    <td width="200" align="center" valign="middle">
+      <a href="https://masklabs.io" target="_blank">
+        <img alt="Masklabs" src="assets/sponsors/Masklabs.png" width="180"/>
+      </a>
+    </td>
+    <td valign="middle">
+      <b>Obscura + <a href="https://masklabs.io" target="_blank">Masklabs</a></b><br><br>
+      Obscura masks the browser. Masklabs masks the traffic.<br><br>
+      Mobile proxies for scrapers, bots, and AI agents that need to look human. Real carrier IPs across a rotating pool, zero shared-IP baggage.<br><br>
+      Pair Obscura's stealth rendering with Masklabs' mobile network and your requests blend into everyday traffic.<br><br>
+      💸 <b>Try it free for 30 days.</b><br><br>
+      🎁 Use code <b>OBSCURA25</b> for <b>25% off your first month</b>.
     </td>
   </tr>
 </table>
@@ -142,9 +159,6 @@ tar xzf obscura-x86_64-linux.tar.gz
 # Linux ARM64 (aarch64)
 curl -LO https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-aarch64-linux.tar.gz
 tar xzf obscura-aarch64-linux.tar.gz
-
-# Arch Linux (AUR)
-yay -S obscura-browser
 
 # NixOS
 nix-env -iA nixpkgs.obscura
@@ -178,10 +192,12 @@ usable on common LTS servers with glibc 2.35+.
 ### Docker
 
 ```bash
-docker run -d --name obscura -p 127.0.0.1:9222:9222 h4ckf0r0day/obscura
+docker run -d --name obscura -p 127.0.0.1:9222:9222 \
+  -e OBSCURA_CDP_TOKEN="$(openssl rand -hex 32)" \
+  h4ckf0r0day/obscura
 ```
 
-Image on [Docker Hub](https://hub.docker.com/r/h4ckf0r0day/obscura). Multi-stage build on `distroless/cc`, no shell, no package manager, ~57 MB compressed.
+Image on [Docker Hub](https://hub.docker.com/r/h4ckf0r0day/obscura). Multi-stage build on `distroless/cc:nonroot` — no shell, no package manager, runs as uid 65532, ~57 MB compressed. A mounted `--storage-dir` must be writable by uid 65532. Publish to host loopback as above; `-p 9222:9222` exposes the port on every interface.
 
 ### Build from source
 
@@ -462,6 +478,7 @@ Start a CDP WebSocket server.
 | `--proxy` | — | HTTP/SOCKS5 proxy URL |
 | `--stealth` | off | Enable anti-detection + tracker blocking |
 | `--workers` | `1` | Number of parallel worker processes |
+| `--font-dir` | — | Recursively load fonts once per worker (repeatable; render build) |
 | `--obey-robots` | off | Respect robots.txt |
 
 ### `obscura fetch <URL>`

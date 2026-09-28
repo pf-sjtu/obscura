@@ -65,6 +65,10 @@ impl FrameRealm {
             return None;
         }
         parent.copy_identity_to_realm(&context);
+        // A snapshot-created realm has null deno_core per-context state slots, so
+        // a promise rejection or dynamic import() in the frame would segfault in
+        // deno_core's global callbacks (#850, #841). Alias the main realm's state.
+        parent.share_deno_context_state_with_realm(&context);
 
         // Only a same-origin frame is reachable from the page. Cross-origin
         // keeps its own security token, so V8 answers `undefined` for any
@@ -442,8 +446,8 @@ mod tests {
         assert!(frame.is_same_origin_as("https://child.example"));
     }
 
-    #[test]
-    fn frame_uses_its_embedding_viewport() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn frame_uses_its_embedding_viewport() {
         let mut parent = page(
             "https://parent.example/page",
             "<html><body><iframe style='width:300px;height:65px'></iframe></body></html>",
@@ -471,8 +475,8 @@ mod tests {
 
     /// A frame must not look like a different browser than its parent. Anti-bot
     /// code fingerprints inside the frame and compares it with the top document.
-    #[test]
-    fn frame_inherits_the_parent_browser_identity() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn frame_inherits_the_parent_browser_identity() {
         let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TestAgent/150.0.0.0";
         let mut parent = ObscuraJsRuntime::new();
         parent.set_user_agent(user_agent);
@@ -748,8 +752,8 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("module")), "{problems:?}");
     }
 
-    #[test]
-    fn many_frames_can_be_alive_at_once() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn many_frames_can_be_alive_at_once() {
         let mut parent = page("https://parent.example/", "<html><body></body></html>");
         let frames: Vec<FrameRealm> = (0..4)
             .map(|index| {
@@ -912,6 +916,46 @@ mod tests {
                 .unwrap(),
             serde_json::json!("https://child.example/"),
         );
+    }
+
+    // #850 / #841 — a promise rejection or dynamic import() inside a frame realm
+    // used to null-deref deno_core's global callbacks (which read per-context
+    // state from V8 embedder slots) and segfault the whole process. The realm
+    // must now alias the main realm's state so these run without crashing.
+    #[test]
+    fn a_frame_rejection_does_not_crash_the_process() {
+        let mut parent = page("https://parent.example/", "<html><body></body></html>");
+        let frame = FrameRealm::new(
+            &mut parent,
+            1,
+            0,
+            "https://parent.example/f",
+            "<html><body></body></html>",
+        )
+        .expect("frame realm");
+        // Reaching this line at all (no SIGSEGV) is the regression check.
+        frame
+            .execute_script(&mut parent, "Promise.reject(new Error('boom')); 'ok'")
+            .unwrap();
+    }
+
+    #[test]
+    fn a_frame_dynamic_import_does_not_crash_the_process() {
+        let mut parent = page("https://parent.example/", "<html><body></body></html>");
+        let frame = FrameRealm::new(
+            &mut parent,
+            1,
+            0,
+            "https://parent.example/f",
+            "<html><body></body></html>",
+        )
+        .expect("frame realm");
+        frame
+            .execute_script(
+                &mut parent,
+                "import('data:text/javascript,export default 1').catch(() => {}); 'ok'",
+            )
+            .unwrap();
     }
 
     /// A frame posting to `parent` must reach the page, arrive trusted, and

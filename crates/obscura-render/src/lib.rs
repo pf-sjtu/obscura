@@ -96,6 +96,8 @@ mod image_capability_tests {
 #[cfg(feature = "paint")]
 mod paint;
 #[cfg(feature = "paint")]
+pub use tiny_skia::Pixmap;
+#[cfg(feature = "paint")]
 pub use paint::{
     image_intrinsic_dimensions, paint_dom, paint_dom_scrolled,
     paint_dom_scrolled_at_animation_time,
@@ -137,6 +139,8 @@ pub use paint::{
 // `dom.rs` name `inline::TextEngine` and call `try_build` unconditionally.
 #[cfg(feature = "paint")]
 pub mod inline;
+#[cfg(feature = "paint")]
+pub use inline::configure_font_directories;
 
 #[cfg(not(feature = "paint"))]
 pub mod inline {
@@ -145,7 +149,7 @@ pub mod inline {
 
     #[derive(Clone)]
     pub(crate) struct WebFont {
-        pub data: Vec<u8>,
+        pub data: std::sync::Arc<Vec<u8>>,
         pub family: Option<String>,
         pub weight: Option<(u16, u16)>,
         pub italic: Option<bool>,
@@ -986,6 +990,8 @@ pub struct LayoutStyle {
     /// top-down before layout because `container-type` is otherwise
     /// non-inherited.
     pub(crate) container_type_inherit: bool,
+    /// Explicit `contain` flags, independent of size-query eligibility.
+    pub(crate) containment: u8,
     /// Computed CSS `container-name`; empty represents `none` (not inherited).
     pub container_names: Vec<String>,
     /// The specified `container-name` value was CSS-wide `inherit`.
@@ -1411,6 +1417,9 @@ pub struct LayoutStyle {
     /// a real inherited CSS property). Resolved into `effectively_invisible`
     /// during `dom::layout_dom`'s inheritance pass.
     pub visibility_hidden: Option<bool>,
+    /// Computed `pointer-events: none|auto`. The property is inherited, so
+    /// `None` means the top-down style pass still needs the parent's value.
+    pub pointer_events_none: Option<bool>,
     /// `opacity`, own (non-inherited) value in 0.0-1.0. `None` means the
     /// default of 1.0.
     pub opacity: Option<f32>,
@@ -1553,6 +1562,8 @@ pub struct LayoutStyle {
     /// text, so it is propagated into the shaped spans of the element's subtree
     /// (this is what underlines links, which are underlined by UA default).
     pub underline: Option<bool>,
+    pub overline: Option<bool>,
+    pub line_through: Option<bool>,
 
     /// `font-style: italic|oblique`. Inherited. Selects an available oblique
     /// face when shaping; the bundled Linux `system-ui` face synthesizes its
@@ -1693,6 +1704,12 @@ pub(crate) fn blockify_outer_display(style: &mut LayoutStyle) {
 }
 
 pub(crate) const CB_TRIGGER_TRANSFORM: u16 = 1 << 0;
+pub(crate) const CONTAIN_SIZE: u8 = 1 << 0;
+pub(crate) const CONTAIN_INLINE_SIZE: u8 = 1 << 1;
+pub(crate) const CONTAIN_LAYOUT: u8 = 1 << 2;
+pub(crate) const CONTAIN_STYLE: u8 = 1 << 3;
+pub(crate) const CONTAIN_PAINT: u8 = 1 << 4;
+pub(crate) const CONTAIN_INHERIT: u8 = 1 << 7;
 pub(crate) const CB_TRIGGER_FILTER: u16 = 1 << 1;
 pub(crate) const CB_TRIGGER_BACKDROP_FILTER: u16 = 1 << 2;
 pub(crate) const CB_TRIGGER_PERSPECTIVE: u16 = 1 << 3;
