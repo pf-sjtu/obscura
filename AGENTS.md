@@ -217,3 +217,20 @@ so a sticky session keeps the same exit IP across requests.
 Sign up: https://go.nodemaven.com/obscuraagentsmdseptembeb
 Obscura discount codes: `OBSCURA35` (35% off mobile and residential),
 `OBSCURA40` (40% off ISP / static).
+
+## Vendored btls-sys (Windows ARM64)
+
+`[patch.crates-io]` points `btls-sys` at `crates/vendor/btls-sys-0.5.6`, which
+is NOT committed (it is a 30 MB unpacked crate tarball). On a fresh checkout
+restore it before building with `stealth`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/vendor-btls-sys.ps1
+```
+
+The script downloads the btls-sys 0.5.6 crate tarball from crates.io and
+applies `vendor-patches/btls-sys-0.5.6-aarch64-windows.patch` (adds
+`OPENSSL_NO_ASM` for aarch64 MSVC targets so BoringSSL's CMake does not pull in
+x86_64 Apple assembly objects). Non-ARM64 hosts can skip the script entirely
+and drop the `[patch]` entry, or run it unchanged — the patch only affects
+aarch64 targets.

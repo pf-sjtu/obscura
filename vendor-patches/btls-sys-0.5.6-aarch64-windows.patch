@@ -1,0 +1,15 @@
+--- a/build/main.rs
++++ b/build/main.rs
+@@ -226,6 +226,12 @@
+         } else {
+             boringssl_cmake.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
+         }
++
++        if config.target_arch == "aarch64" {
++            // BoringSSL's Windows ARM64 CMake setup can otherwise reference
++            // x86_64 Apple assembly objects when building through MSVC.
++            boringssl_cmake.define("OPENSSL_NO_ASM", "YES");
++        }
+     }
+ 
+     if config.host == config.target {
