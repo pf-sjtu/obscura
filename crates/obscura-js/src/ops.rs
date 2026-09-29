@@ -4016,6 +4016,547 @@ async fn stealth_fetch_all(
     .to_string())
 }
 
+/// Transport for the synchronous XHR path: either the page's reqwest client
+/// or, under --stealth, the wreq client so the Chrome TLS fingerprint and
+/// client hints carry over.
+enum SyncFetchTransport {
+    Reqwest(reqwest::Client),
+    #[cfg(feature = "stealth")]
+    Stealth(Arc<StealthHttpClient>),
+}
+
+/// One network exchange for `op_fetch_url_sync`. Mirrors the redirect,
+/// SSRF-per-hop, cookie and CORS rules of op_fetch_url / stealth_fetch_all so
+/// `XMLHttpRequest.open(..., false)` observes the same wire behaviour; only
+/// interception is skipped because a paused request can only be resolved from
+/// the event loop the sync call is blocking.
+#[allow(clippy::too_many_arguments)]
+async fn sync_fetch_all(
+    transport: SyncFetchTransport,
+    cookie_jar: Option<Arc<CookieJar>>,
+    allow_private_network: bool,
+    url: String,
+    method: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+    page_origin: String,
+    mode: String,
+    credentials: FetchCredentials,
+    internal_load: bool,
+) -> Result<serde_json::Value, deno_error::JsErrorBox> {
+    let cookie_initiator = url::Url::parse(&page_origin).ok();
+    let mut current_url = url.clone();
+    let mut current_method = method.clone();
+    let mut current_body = body;
+    let mut current_headers = headers;
+    let mut redirects_followed: usize = 0;
+    let mut crossed_origin = request_origin(&current_url)
+        .map(|request_origin| request_origin != page_origin)
+        .unwrap_or(false);
+
+    // CORS preflight, same rule as op_fetch_url: cross-origin cors-mode
+    // requests with a non-safelisted method or unsafe headers send OPTIONS
+    // first. Runs on the reqwest client for both transports (as the async
+    // path does before handing off to stealth).
+    let req_method: reqwest::Method = method.parse().unwrap_or(reqwest::Method::GET);
+    let initial_is_cross_origin = crossed_origin;
+    let unsafe_header_names = if initial_is_cross_origin && mode == "cors" {
+        cors_unsafe_request_header_names(&current_headers)
+    } else {
+        Vec::new()
+    };
+    let needs_preflight = initial_is_cross_origin
+        && mode == "cors"
+        && (!is_cors_safelisted_method(&req_method) || !unsafe_header_names.is_empty());
+    if needs_preflight {
+        let client = match &transport {
+            SyncFetchTransport::Reqwest(client) => client.clone(),
+            #[cfg(feature = "stealth")]
+            SyncFetchTransport::Stealth(_) => {
+                cached_request_client(None).map_err(deno_error::JsErrorBox::generic)?
+            }
+        };
+        let mut preflight_request = client
+            .request(reqwest::Method::OPTIONS, &url)
+            .timeout(fetch_timeout())
+            .header("Origin", &page_origin)
+            .header("Access-Control-Request-Method", method.as_str());
+        if !unsafe_header_names.is_empty() {
+            preflight_request = preflight_request.header(
+                "Access-Control-Request-Headers",
+                unsafe_header_names.join(","),
+            );
+        }
+        let preflight = preflight_request
+            .send()
+            .await
+            .map_err(|e| deno_error::JsErrorBox::generic(format!("CORS preflight failed: {}", e)))?;
+        if !preflight.status().is_success() {
+            return Err(deno_error::JsErrorBox::generic(format!(
+                "CORS preflight returned HTTP {}",
+                preflight.status()
+            )));
+        }
+        let allowed_origin = preflight
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let allow_credentials = preflight
+            .headers()
+            .get("access-control-allow-credentials")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !cors_response_allows(credentials, &page_origin, allowed_origin, allow_credentials) {
+            return Ok(serde_json::json!({
+                "status": 0,
+                "body": "",
+                "url": url,
+                "headers": {},
+                "corsBlocked": true,
+                "corsError": format!(
+                    "CORS error: Origin '{}' not in Access-Control-Allow-Origin '{}'",
+                    page_origin, allowed_origin
+                ),
+            }));
+        }
+    }
+
+    let (status, resp_headers, resp_bytes): (u16, HashMap<String, String>, Vec<u8>) = loop {
+        let parsed_current = match url::Url::parse(&current_url) {
+            Ok(u) => u,
+            Err(e) => {
+                return Ok(serde_json::json!({
+                    "status": 0, "body": "", "url": current_url, "headers": {},
+                    "error": format!("Unparsable URL: {}", e),
+                }));
+            }
+        };
+        if let Err(reason) = validate_fetch_url(&parsed_current, allow_private_network) {
+            return Ok(serde_json::json!({
+                "status": 0, "body": "", "url": current_url, "headers": {},
+                "blocked": true,
+                "error": format!("Forbidden URL blocked: {}", reason),
+            }));
+        }
+        let current_is_cross_origin =
+            parsed_current.origin().ascii_serialization() != page_origin;
+        crossed_origin |= current_is_cross_origin;
+        let credentials_allowed = credentials.allows(&page_origin, &current_url);
+
+        let mut req_headers: HashMap<String, String> = HashMap::new();
+        if sends_origin_header(&current_method, current_is_cross_origin) {
+            req_headers.insert("origin".to_string(), page_origin.clone());
+        }
+        for (k, v) in &current_headers {
+            req_headers.insert(k.to_lowercase(), v.clone());
+        }
+        if !req_headers.keys().any(|k| k == "user-agent") {
+            req_headers.insert(
+                "user-agent".to_string(),
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36".to_string(),
+            );
+        }
+
+        let cookie_context = credentials_allowed.then(|| {
+            if cookie_initiator
+                .as_ref()
+                .is_some_and(|source| same_site(source, &parsed_current))
+            {
+                SameSiteContext::SameSite
+            } else {
+                SameSiteContext::CrossSite
+            }
+        });
+
+        let (status, headers_map, bytes) = match &transport {
+            #[cfg(feature = "stealth")]
+            SyncFetchTransport::Stealth(stealth) => {
+                let r = stealth
+                    .send_single_with_context(
+                        &current_method,
+                        &parsed_current,
+                        &req_headers,
+                        &current_body,
+                        cookie_context,
+                        credentials_allowed,
+                    )
+                    .await
+                    .map_err(|e| deno_error::JsErrorBox::generic(e.to_string()))?;
+                (r.status, r.headers, r.body)
+            }
+            SyncFetchTransport::Reqwest(client) => {
+                let mut req = client
+                    .request(
+                        current_method.parse().unwrap_or(reqwest::Method::GET),
+                        &current_url,
+                    )
+                    .timeout(fetch_timeout());
+                if let (Some(context), Some(ref jar)) = (cookie_context, &cookie_jar) {
+                    let cookie_header = jar.get_cookie_header_in_context(&parsed_current, context);
+                    if !cookie_header.is_empty() {
+                        req = req.header("Cookie", &cookie_header);
+                    }
+                }
+                for (k, v) in &req_headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                if !current_body.is_empty() {
+                    req = req.body(current_body.clone());
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|e| deno_error::JsErrorBox::generic(e.to_string()))?;
+                if credentials_allowed {
+                    if let Some(ref jar) = cookie_jar {
+                        for val in resp.headers().get_all(reqwest::header::SET_COOKIE) {
+                            if let Ok(s) = val.to_str() {
+                                jar.set_cookie(s, &parsed_current);
+                            }
+                        }
+                    }
+                }
+                let status = resp.status().as_u16();
+                let headers_map: HashMap<String, String> = resp
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect();
+                let bytes = read_body_capped(resp, fetch_max_body_bytes()).await?;
+                (status, headers_map, bytes)
+            }
+        };
+
+        if !(300..400).contains(&status) {
+            break (status, headers_map, bytes);
+        }
+        // A cross-origin redirect response must pass the CORS check before it
+        // is followed (#973).
+        if mode == "cors" && current_is_cross_origin {
+            let allowed = headers_map
+                .get("access-control-allow-origin")
+                .map(String::as_str)
+                .unwrap_or("");
+            let allow_credentials = headers_map
+                .get("access-control-allow-credentials")
+                .map(String::as_str)
+                .unwrap_or("");
+            if !cors_response_allows(credentials, &page_origin, allowed, allow_credentials) {
+                return Ok(serde_json::json!({
+                    "status": 0, "body": "", "url": current_url, "headers": {},
+                    "corsBlocked": true,
+                    "corsError": format!(
+                        "CORS error: cross-origin redirect from '{}' not allowed by Access-Control-Allow-Origin '{}'",
+                        current_url, allowed
+                    ),
+                }));
+            }
+        }
+        let Some(location) = headers_map.get("location").cloned() else {
+            break (status, headers_map, bytes);
+        };
+        let next_url = match parsed_current.join(&location) {
+            Ok(u) => u,
+            Err(_) => break (status, headers_map, bytes),
+        };
+        if let Err(reason) = validate_fetch_url(&next_url, allow_private_network) {
+            return Ok(serde_json::json!({
+                "status": 0, "body": "", "url": next_url.to_string(), "headers": {},
+                "blocked": true,
+                "error": format!("Redirect to forbidden URL blocked: {}", reason),
+            }));
+        }
+        redirects_followed += 1;
+        if redirects_followed > FETCH_REDIRECT_LIMIT {
+            return Ok(serde_json::json!({
+                "status": 0, "body": "", "url": next_url.to_string(), "headers": {},
+                "blocked": true,
+                "error": format!("Too many redirects (>{})", FETCH_REDIRECT_LIMIT),
+            }));
+        }
+        let downgraded_to_get = status == 301 || status == 302 || status == 303;
+        if downgraded_to_get {
+            current_method = "GET".to_string();
+            current_body.clear();
+        }
+        let crosses_origin = parsed_current.origin() != next_url.origin();
+        sanitize_redirect_headers(&mut current_headers, crosses_origin, downgraded_to_get);
+        current_url = next_url.to_string();
+    };
+
+    let final_is_cross_origin = request_origin(&current_url)
+        .map(|request_origin| request_origin != page_origin)
+        .unwrap_or(false);
+    if final_is_cross_origin && mode == "cors" {
+        let allowed = resp_headers
+            .get("access-control-allow-origin")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        let allow_credentials = resp_headers
+            .get("access-control-allow-credentials")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        if !cors_response_allows(credentials, &page_origin, allowed, allow_credentials) {
+            return Ok(serde_json::json!({
+                "status": 0,
+                "body": "",
+                "url": url,
+                "headers": {},
+                "corsBlocked": true,
+                "corsError": if credentials == FetchCredentials::Include {
+                    format!(
+                        "CORS error: credentialed request requires Access-Control-Allow-Origin '{}' and Access-Control-Allow-Credentials 'true'",
+                        page_origin
+                    )
+                } else {
+                    format!(
+                        "CORS error: Origin '{}' not in Access-Control-Allow-Origin '{}'",
+                        page_origin, allowed
+                    )
+                },
+            }));
+        }
+    }
+
+    let resp_body = String::from_utf8_lossy(&resp_bytes).to_string();
+    let resp_body_base64 = BASE64.encode(&resp_bytes);
+    let opaque = !internal_load && mode == "no-cors" && crossed_origin;
+    let script_headers = if opaque {
+        HashMap::new()
+    } else {
+        visible_response_headers(&resp_headers, final_is_cross_origin, credentials)
+    };
+
+    Ok(serde_json::json!({
+        "status": if opaque { 0 } else { status },
+        "body": if opaque { String::new() } else { resp_body },
+        "bodyBase64": if opaque { String::new() } else { resp_body_base64 },
+        "url": current_url,
+        "redirected": redirects_followed > 0,
+        "opaque": opaque,
+        "headers": script_headers,
+        "statusCode": status,
+        "eventUrl": current_url,
+        "eventHeaders": resp_headers,
+        "eventBodySize": resp_bytes.len(),
+    }))
+}
+
+/// Synchronous XHR (`open(method, url, false)`). The request runs on a
+/// short-lived worker thread with its own current-thread runtime while the JS
+/// thread blocks, which is exactly the observable sync-XHR semantics. The
+/// interception channel cannot be honoured here: its resolver can only answer
+/// from the event loop this call blocks.
+#[op2]
+#[string]
+#[allow(clippy::too_many_arguments)]
+fn op_fetch_url_sync(
+    state: Rc<RefCell<OpState>>,
+    #[string] url: String,
+    #[string] method: String,
+    #[string] headers_json: String,
+    #[buffer] body: JsBuffer,
+    #[string] origin: String,
+    #[string] mode: String,
+    #[string] credentials: String,
+    internal_load: bool,
+) -> Result<String, deno_error::JsErrorBox> {
+    let body = body.to_vec();
+    let (cookie_jar, http_client, stealth_client, proxy_url, request_id) = {
+        let state_borrow = state.borrow();
+        let gs = state_borrow.borrow::<SharedState>().clone();
+        let mut gs = gs.borrow_mut();
+        for pattern in &gs.blocked_urls {
+            if pattern == "*" || url.contains(pattern) || glob_match(pattern, &url) {
+                return Ok(serde_json::json!({
+                    "status": 0,
+                    "body": "",
+                    "url": url,
+                    "headers": {},
+                    "blocked": true,
+                })
+                .to_string());
+            }
+        }
+        push_capped(&mut gs.fetched_urls, url.clone(), MAX_FETCHED_URLS);
+        static NEXT_REQUEST_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        let request_id = format!(
+            "fetch-sync-{}",
+            NEXT_REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let proxy_url = gs
+            .http_client
+            .as_ref()
+            .and_then(|c| c.proxy_url().map(|s| s.to_string()));
+        #[cfg(feature = "stealth")]
+        let stealth_client = gs.stealth_client.clone();
+        #[cfg(not(feature = "stealth"))]
+        let stealth_client = ();
+        (
+            gs.cookie_jar.clone(),
+            gs.http_client.clone(),
+            stealth_client,
+            proxy_url,
+            request_id,
+        )
+    };
+    let allow_private_network = http_client
+        .as_ref()
+        .is_some_and(|client| client.allow_private_network);
+    let gate_error = match url::Url::parse(&url) {
+        Ok(parsed_url) => validate_fetch_url(&parsed_url, allow_private_network).err(),
+        Err(err) => Some(format!("Unparsable URL blocked: {}", err)),
+    };
+    if let Some(e) = gate_error {
+        return Ok(serde_json::json!({
+            "status": 0,
+            "body": "",
+            "url": url,
+            "headers": {},
+            "blocked": true,
+            "error": e,
+        })
+        .to_string());
+    }
+
+    let page_origin = if origin.is_empty() {
+        request_origin(&url).unwrap_or_default()
+    } else {
+        origin.clone()
+    };
+    let credentials = FetchCredentials::parse(&credentials);
+    let custom_headers: HashMap<String, String> =
+        serde_json::from_str(&headers_json).unwrap_or_default();
+    let event_method = method.clone();
+
+    // The op blocks the isolate while the worker thread does I/O; hold the
+    // command watchdog for a bounded window instead of letting it terminate
+    // mid-request.
+    crate::cdp_watchdog::hold_sync_block(
+        fetch_timeout() * 4 + std::time::Duration::from_secs(30),
+    );
+    struct SyncBlockGuard;
+    impl Drop for SyncBlockGuard {
+        fn drop(&mut self) {
+            crate::cdp_watchdog::release_sync_block();
+        }
+    }
+    let _guard = SyncBlockGuard;
+
+    let result = std::thread::spawn(move || -> Result<serde_json::Value, String> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("sync fetch runtime: {e}"))?;
+        rt.block_on(async move {
+            let transport = {
+                #[cfg(feature = "stealth")]
+                if let Some(stealth) = stealth_client {
+                    SyncFetchTransport::Stealth(stealth)
+                } else
+                {
+                    let client = match &http_client {
+                        Some(client) => client.request_client().await,
+                        None => cached_request_client(proxy_url.as_deref())?,
+                    };
+                    SyncFetchTransport::Reqwest(client)
+                }
+                #[cfg(not(feature = "stealth"))]
+                {
+                    let _ = stealth_client;
+                    let client = match &http_client {
+                        Some(client) => client.request_client().await,
+                        None => cached_request_client(proxy_url.as_deref())?,
+                    };
+                    SyncFetchTransport::Reqwest(client)
+                }
+            };
+            sync_fetch_all(
+                transport,
+                cookie_jar,
+                allow_private_network,
+                url,
+                method,
+                custom_headers,
+                body,
+                page_origin,
+                mode,
+                credentials,
+                internal_load,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        })
+    })
+    .join()
+    .map_err(|_| deno_error::JsErrorBox::generic("sync fetch worker panicked"))?
+    .map_err(deno_error::JsErrorBox::generic)?;
+
+    // Record the network event + response body under the same fetch-{N}-style
+    // id so browser_network_requests and CDP Network cover sync XHR too.
+    if result.get("statusCode").and_then(|v| v.as_u64()).is_some() {
+        let status = result["statusCode"].as_u64().unwrap_or(0) as u16;
+        let event_url = result["eventUrl"].as_str().unwrap_or("").to_string();
+        let body_text = result["body"].as_str().unwrap_or("").to_string();
+        let event_headers: HashMap<String, String> = result
+            .get("eventHeaders")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let body_len = result["eventBodySize"].as_u64().unwrap_or(0) as usize;
+        let state_borrow = state.borrow();
+        let gs = state_borrow.borrow::<SharedState>().clone();
+        let mut gs = gs.borrow_mut();
+        let max_entries = response_body_entry_limit();
+        let max_bytes = response_body_byte_limit();
+        if max_entries > 0 && max_bytes > 0 && body_len <= max_bytes {
+            gs.network_response_bodies.insert(
+                request_id.clone(),
+                StoredNetworkResponseBody {
+                    body: body_text,
+                    base64_encoded: false,
+                },
+            );
+            gs.network_response_body_order.push_back(request_id.clone());
+            while gs.network_response_body_order.len() > max_entries {
+                if let Some(oldest) = gs.network_response_body_order.pop_front() {
+                    gs.network_response_bodies.remove(&oldest);
+                }
+            }
+        }
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        gs.js_network_events.push(JsNetworkEvent {
+            request_id: request_id.clone(),
+            intercepted: false,
+            url: event_url,
+            method: event_method.clone(),
+            status,
+            response_headers: event_headers,
+            body_size: body_len,
+            timestamp,
+        });
+        const MAX_JS_NETWORK_EVENTS: usize = 4096;
+        if gs.js_network_events.len() > MAX_JS_NETWORK_EVENTS {
+            let overflow = gs.js_network_events.len() - MAX_JS_NETWORK_EVENTS;
+            gs.js_network_events.drain(0..overflow);
+        }
+    }
+
+    let mut result = result;
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("requestId".to_string(), serde_json::json!(request_id));
+        obj.remove("statusCode");
+        obj.remove("eventUrl");
+        obj.remove("eventHeaders");
+        obj.remove("eventBodySize");
+    }
+    Ok(result.to_string())
+}
+
 pub(crate) fn glob_match(pattern: &str, url: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -6277,6 +6818,7 @@ pub fn build_extension() -> Extension {
         op_runtime_events_enabled(),
         op_console_msg(),
         op_fetch_url(),
+        op_fetch_url_sync(),
         op_get_cookies(),
         op_set_cookie(),
         op_navigate(),

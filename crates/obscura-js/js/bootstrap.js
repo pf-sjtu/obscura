@@ -69,7 +69,27 @@ const __obscuraCore = globalThis.Deno.core;
     'XMLHttpRequestEventTarget', 'HTMLMediaElement', 'HTMLVideoElement',
     'HTMLAudioElement', 'WebGL2RenderingContext',
     'SVGElement', 'SVGGraphicsElement', 'SVGGeometryElement', 'SVGPathElement',
-    'SVGSVGElement',
+    'SVGSVGElement', 'SVGImageElement', 'SVGUseElement', 'MathMLElement',
+    // HTML element interfaces each get their own brand (issue: `= Element`
+    // aliases made every brand check match, so e.g. webpack style-loader's
+    // `target instanceof HTMLIFrameElement` fired on <head>).
+    'HTMLElement', 'HTMLUnknownElement', 'HTMLAnchorElement', 'HTMLAreaElement',
+    'HTMLBaseElement', 'HTMLBRElement', 'HTMLButtonElement', 'HTMLCanvasElement',
+    'HTMLDataElement', 'HTMLDataListElement', 'HTMLDetailsElement',
+    'HTMLDialogElement', 'HTMLDivElement', 'HTMLDListElement', 'HTMLEmbedElement',
+    'HTMLFieldSetElement', 'HTMLFontElement', 'HTMLFormElement', 'HTMLFrameElement',
+    'HTMLFrameSetElement', 'HTMLHeadElement', 'HTMLHeadingElement', 'HTMLHRElement',
+    'HTMLHtmlElement', 'HTMLIFrameElement', 'HTMLImageElement', 'HTMLInputElement',
+    'HTMLLabelElement', 'HTMLLegendElement', 'HTMLLIElement', 'HTMLLinkElement',
+    'HTMLMapElement', 'HTMLMenuElement', 'HTMLMetaElement', 'HTMLMeterElement',
+    'HTMLModElement', 'HTMLObjectElement', 'HTMLOListElement', 'HTMLOptGroupElement',
+    'HTMLOptionElement', 'HTMLOutputElement', 'HTMLParagraphElement',
+    'HTMLPictureElement', 'HTMLPreElement', 'HTMLProgressElement',
+    'HTMLQuoteElement', 'HTMLScriptElement', 'HTMLSelectElement',
+    'HTMLSlotElement', 'HTMLSourceElement', 'HTMLSpanElement', 'HTMLStyleElement',
+    'HTMLTableElement', 'HTMLTableCellElement', 'HTMLTableRowElement',
+    'HTMLTableSectionElement', 'HTMLTemplateElement', 'HTMLTextAreaElement',
+    'HTMLTitleElement', 'HTMLTrackElement', 'HTMLUListElement',
   ];
   var _desc = { value: undefined, writable: true, enumerable: false, configurable: true };
   for (var _i = 0; _i < _names.length; _i++) {
@@ -5571,6 +5591,15 @@ function _throwDocumentDomainSecurityError() {
   throw new DOMException("Failed to set the 'domain' property on 'Document'", "SecurityError");
 }
 
+// HTMLElement sits between Element and every HTMLFooElement: Web IDL gives
+// each interface its own brand, so `div instanceof HTMLIFrameElement` must be
+// false while `div instanceof HTMLElement` and `instanceof Element` stay true.
+// Aliasing them all to Element made every brand check match and broke feature
+// detection (webpack style-loader could not install a single stylesheet).
+class HTMLElement extends Element {}
+// Elements in the MathML namespace get MathMLElement; unknown-namespace
+// elements stay plain Element.
+class MathMLElement extends Element {}
 class Document extends Node {
   get timeline() {
     if (!this._timeline) {
@@ -6400,7 +6429,7 @@ function _imageEncodingError() {
 // layout/paint. The render-only native op owns responsive candidate selection,
 // fetching, and metadata sniffing; bootstrap owns only the observable request
 // state and event timing.
-class HTMLImageElement extends Element {
+class HTMLImageElement extends HTMLElement {
   constructor(nid) {
     super(nid);
     this._imageRequest = 0;
@@ -6722,7 +6751,7 @@ _markNative(HTMLImageElement.prototype.decode);
 
 // Report only capabilities backed by a real decoder. Poster rendering is an
 // image operation and does not make any audio/video container playable.
-class HTMLMediaElement extends Element {
+class HTMLMediaElement extends HTMLElement {
   static NETWORK_EMPTY = 0;
   static NETWORK_IDLE = 1;
   static NETWORK_LOADING = 2;
@@ -6796,7 +6825,7 @@ class HTMLVideoElement extends HTMLMediaElement {
   get videoHeight() { return 0; }
 }
 class HTMLAudioElement extends HTMLMediaElement {}
-class HTMLTrackElement extends Element {
+class HTMLTrackElement extends HTMLElement {
   static NONE = 0;
   static LOADING = 1;
   static LOADED = 2;
@@ -6829,37 +6858,80 @@ globalThis.TextTrackCue = TextTrackCue;
 globalThis.TextTrackCueList = TextTrackCueList;
 globalThis.VTTCue = VTTCue;
 
+// HTML tag -> interface name, per the HTML spec's element interface mapping.
+// Resolved lazily through globalThis so definition order does not matter.
+// Spec-known HTML elements with no dedicated interface get HTMLElement;
+// unrecognised HTML tags get HTMLUnknownElement; tags carrying '-' are valid
+// custom-element candidates and get HTMLElement until they upgrade.
+const _HTML_TAG_INTERFACE = {
+  A: 'HTMLAnchorElement', AREA: 'HTMLAreaElement', AUDIO: 'HTMLAudioElement',
+  BASE: 'HTMLBaseElement', BLOCKQUOTE: 'HTMLQuoteElement', BODY: 'HTMLBodyElement',
+  BR: 'HTMLBRElement',
+  BUTTON: 'HTMLButtonElement', CANVAS: 'HTMLCanvasElement', DATA: 'HTMLDataElement',
+  DATALIST: 'HTMLDataListElement', DEL: 'HTMLModElement', DETAILS: 'HTMLDetailsElement',
+  DIALOG: 'HTMLDialogElement', DIV: 'HTMLDivElement', DL: 'HTMLDListElement',
+  EMBED: 'HTMLEmbedElement', FIELDSET: 'HTMLFieldSetElement', FONT: 'HTMLFontElement',
+  FORM: 'HTMLFormElement', FRAME: 'HTMLFrameElement', FRAMESET: 'HTMLFrameSetElement',
+  H1: 'HTMLHeadingElement', H2: 'HTMLHeadingElement', H3: 'HTMLHeadingElement',
+  H4: 'HTMLHeadingElement', H5: 'HTMLHeadingElement', H6: 'HTMLHeadingElement',
+  HEAD: 'HTMLHeadElement', HR: 'HTMLHRElement', HTML: 'HTMLHtmlElement',
+  IFRAME: 'HTMLIFrameElement', IMG: 'HTMLImageElement', INPUT: 'HTMLInputElement',
+  INS: 'HTMLModElement', LABEL: 'HTMLLabelElement', LEGEND: 'HTMLLegendElement',
+  LI: 'HTMLLIElement', LINK: 'HTMLLinkElement', MAP: 'HTMLMapElement',
+  MENU: 'HTMLMenuElement', META: 'HTMLMetaElement', METER: 'HTMLMeterElement',
+  OBJECT: 'HTMLObjectElement', OL: 'HTMLOListElement', OPTGROUP: 'HTMLOptGroupElement',
+  OPTION: 'HTMLOptionElement', OUTPUT: 'HTMLOutputElement', P: 'HTMLParagraphElement',
+  PICTURE: 'HTMLPictureElement', PRE: 'HTMLPreElement', PROGRESS: 'HTMLProgressElement',
+  Q: 'HTMLQuoteElement', SCRIPT: 'HTMLScriptElement', SELECT: 'HTMLSelectElement',
+  SLOT: 'HTMLSlotElement', SOURCE: 'HTMLSourceElement', SPAN: 'HTMLSpanElement',
+  STYLE: 'HTMLStyleElement', TABLE: 'HTMLTableElement', TBODY: 'HTMLTableSectionElement',
+  TD: 'HTMLTableCellElement', TEMPLATE: 'HTMLTemplateElement', TEXTAREA: 'HTMLTextAreaElement',
+  TFOOT: 'HTMLTableSectionElement', TH: 'HTMLTableCellElement', THEAD: 'HTMLTableSectionElement',
+  TITLE: 'HTMLTitleElement', TR: 'HTMLTableRowElement', TRACK: 'HTMLTrackElement',
+  UL: 'HTMLUListElement', VIDEO: 'HTMLVideoElement',
+};
+// HTML elements that share the plain HTMLElement interface.
+const _HTML_GENERIC_TAGS = new Set([
+  'ABBR', 'ADDRESS', 'ARTICLE', 'ASIDE', 'B', 'BDI', 'BDO', 'CITE', 'CODE',
+  'DD', 'DFN', 'DT', 'EM', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'HEADER', 'HGROUP',
+  'I', 'KBD', 'MAIN', 'MARK', 'NAV', 'NOSCRIPT', 'RP', 'RT', 'RUBY', 'S',
+  'SAMP', 'SEARCH', 'SECTION', 'SMALL', 'STRONG', 'SUB', 'SUMMARY', 'SUP',
+  'TIME', 'U', 'VAR', 'WBR',
+  'ACRONYM', 'BGSOUND', 'DIR', 'NOEMBED', 'NOFRAMES', 'PLAINTEXT', 'RB',
+  'RTC', 'STRIKE', 'TT', 'XMP',
+]);
+function _htmlElementClass(tag) {
+  const name = _HTML_TAG_INTERFACE[tag];
+  if (name) {
+    const C = globalThis[name];
+    if (C) return C;
+  }
+  if (_HTML_GENERIC_TAGS.has(tag) || tag.indexOf('-') !== -1) {
+    return globalThis.HTMLElement || Element;
+  }
+  return globalThis.HTMLUnknownElement || Element;
+}
 function _elementClassFor(nid) {
   const tag = _domParse("tag_name", nid);
   // HTML tagName values are ASCII-uppercase. Foreign SVG names retain their
   // case, so keep the common HTML path fast and only inspect the native
   // namespace for possible SVG wrappers.
-  if (tag && tag !== tag.toUpperCase()
-      && _domParse("namespace_uri", nid) === "http://www.w3.org/2000/svg") {
-    if (tag === "path" && globalThis.SVGPathElement) return globalThis.SVGPathElement;
-    if (tag === "svg" && globalThis.SVGSVGElement) return globalThis.SVGSVGElement;
-    if (globalThis.SVGElement) return globalThis.SVGElement;
+  if (tag && tag !== tag.toUpperCase()) {
+    const ns = _domParse("namespace_uri", nid);
+    if (ns === "http://www.w3.org/2000/svg") {
+      if (tag === "path" && globalThis.SVGPathElement) return globalThis.SVGPathElement;
+      if (tag === "svg" && globalThis.SVGSVGElement) return globalThis.SVGSVGElement;
+      if (tag === "image" && globalThis.SVGImageElement) return globalThis.SVGImageElement;
+      if (tag === "use" && globalThis.SVGUseElement) return globalThis.SVGUseElement;
+      if (globalThis.SVGElement) return globalThis.SVGElement;
+    }
+    if (ns === "http://www.w3.org/1998/Math/MathML" && globalThis.MathMLElement) {
+      return globalThis.MathMLElement;
+    }
+    return Element;
   }
-  if (tag === "FORM" && globalThis.HTMLFormElement) return globalThis.HTMLFormElement;
-  if (tag === "INPUT" && globalThis.HTMLInputElement
-      && _domParse("namespace_uri", nid) === "http://www.w3.org/1999/xhtml"
-      && _domParse("local_name", nid) === "input") return globalThis.HTMLInputElement;
-  if (tag === "TEXTAREA" && globalThis.HTMLTextAreaElement) return globalThis.HTMLTextAreaElement;
-  if (tag === "META" && globalThis.HTMLMetaElement
-      && _domParse("namespace_uri", nid) === "http://www.w3.org/1999/xhtml"
-      && _domParse("local_name", nid) === "meta") return globalThis.HTMLMetaElement;
-  // Only HTML slots take part in slot assignment; a foreign-namespace "SLOT"
-  // (createElementNS + cloneNode lands here) stays a plain Element.
-  if (tag === "SLOT" && globalThis.HTMLSlotElement
-      && _domParse("namespace_uri", nid) === "http://www.w3.org/1999/xhtml") {
-    return globalThis.HTMLSlotElement;
-  }
-  if (tag === "IMG") return HTMLImageElement;
-  if (tag === "CANVAS" && globalThis.HTMLCanvasElement) return globalThis.HTMLCanvasElement;
-  if (tag === "AUDIO") return HTMLAudioElement;
-  if (tag === "VIDEO") return HTMLVideoElement;
-  if (tag === "TRACK") return HTMLTrackElement;
-  return Element;
+  if (!tag) return Element;
+  return _htmlElementClass(tag);
 }
 function _elementClassForKnownName(namespace, qualifiedName) {
   const localName = qualifiedName.includes(":")
@@ -6868,20 +6940,16 @@ function _elementClassForKnownName(namespace, qualifiedName) {
   if (namespace === "http://www.w3.org/2000/svg") {
     if (localName === "path" && globalThis.SVGPathElement) return globalThis.SVGPathElement;
     if (localName === "svg" && globalThis.SVGSVGElement) return globalThis.SVGSVGElement;
+    if (localName === "image" && globalThis.SVGImageElement) return globalThis.SVGImageElement;
+    if (localName === "use" && globalThis.SVGUseElement) return globalThis.SVGUseElement;
     if (globalThis.SVGElement) return globalThis.SVGElement;
+    return Element;
+  }
+  if (namespace === "http://www.w3.org/1998/Math/MathML") {
+    return globalThis.MathMLElement || Element;
   }
   if (namespace === "http://www.w3.org/1999/xhtml") {
-    const tag = localName.toUpperCase();
-    if (tag === "FORM" && globalThis.HTMLFormElement) return globalThis.HTMLFormElement;
-    if (localName === "input" && globalThis.HTMLInputElement) return globalThis.HTMLInputElement;
-    if (tag === "TEXTAREA" && globalThis.HTMLTextAreaElement) return globalThis.HTMLTextAreaElement;
-    if (localName === "meta" && globalThis.HTMLMetaElement) return globalThis.HTMLMetaElement;
-    if (tag === "SLOT" && globalThis.HTMLSlotElement) return globalThis.HTMLSlotElement;
-    if (tag === "IMG") return HTMLImageElement;
-    if (tag === "CANVAS" && globalThis.HTMLCanvasElement) return globalThis.HTMLCanvasElement;
-    if (tag === "AUDIO") return HTMLAudioElement;
-    if (tag === "VIDEO") return HTMLVideoElement;
-    if (tag === "TRACK") return HTMLTrackElement;
+    return _htmlElementClass(localName.toUpperCase());
   }
   return Element;
 }
@@ -7758,6 +7826,9 @@ globalThis.XMLHttpRequest = class XMLHttpRequest extends XMLHttpRequestEventTarg
   open(method, url, async_) {
     this._method = method;
     this._url = url;
+    // async defaults to true per spec; only an explicit `false` makes the
+    // request synchronous.
+    this._async = async_ !== false;
     this._headers = {};
     this._responseHeaders = {};
     this._aborted = false;
@@ -7798,6 +7869,11 @@ globalThis.XMLHttpRequest = class XMLHttpRequest extends XMLHttpRequestEventTarg
     // Same rule as fetch: always resolve through the URL parser.
     let url = _resolveUrl(this._url);
 
+    if (this._async === false) {
+      this._sendSync(url, body);
+      return;
+    }
+
     fetch(url, {
       method: this._method,
       headers: this._headers,
@@ -7826,40 +7902,7 @@ globalThis.XMLHttpRequest = class XMLHttpRequest extends XMLHttpRequestEventTarg
       // corrupted assets while fetch() was byte-correct.
       const buffer = await resp.arrayBuffer();
       if (xhr._aborted) return;
-
-      const wantsText = xhr.responseType === '' || xhr.responseType === 'text'
-                     || xhr.responseType === 'json' || xhr.responseType === 'document';
-      // Decoding a multi-megabyte binary body into a string nobody reads is
-      // pure waste, and responseText is not defined for the binary types.
-      const text = wantsText ? new TextDecoder().decode(buffer) : '';
-
-      xhr.responseText = text;
-      xhr._setReadyState(3); // LOADING
-
-      switch (xhr.responseType) {
-        case 'json':
-          try { xhr.response = JSON.parse(text); } catch(e) { xhr.response = null; }
-          break;
-        case 'text':
-        case '':
-          xhr.response = text;
-          break;
-        case 'arraybuffer':
-          xhr.response = buffer;
-          break;
-        case 'blob':
-          xhr.response = new Blob([buffer]);
-          break;
-        case 'document':
-          xhr.response = text; // simplified
-          break;
-        default:
-          xhr.response = text;
-      }
-
-      xhr._setReadyState(4); // DONE
-      xhr._fireEvent('load');
-      xhr._fireEvent('loadend');
+      xhr._applyBuffer(buffer);
     }).catch((err) => {
       if (xhr._aborted) return;
       xhr.status = 0;
@@ -7876,6 +7919,85 @@ globalThis.XMLHttpRequest = class XMLHttpRequest extends XMLHttpRequestEventTarg
         if (xhr.onerror) xhr.onerror(err);
       }
     });
+  }
+
+  // Shared tail of send(): decode the response bytes for the configured
+  // responseType and run the LOADING -> DONE transitions.
+  _applyBuffer(buffer) {
+    const xhr = this;
+    const wantsText = xhr.responseType === '' || xhr.responseType === 'text'
+                   || xhr.responseType === 'json' || xhr.responseType === 'document';
+    // Decoding a multi-megabyte binary body into a string nobody reads is
+    // pure waste, and responseText is not defined for the binary types.
+    const text = wantsText ? new TextDecoder().decode(buffer) : '';
+
+    xhr.responseText = text;
+    xhr._setReadyState(3); // LOADING
+
+    switch (xhr.responseType) {
+      case 'json':
+        try { xhr.response = JSON.parse(text); } catch(e) { xhr.response = null; }
+        break;
+      case 'text':
+      case '':
+        xhr.response = text;
+        break;
+      case 'arraybuffer':
+        xhr.response = buffer;
+        break;
+      case 'blob':
+        xhr.response = new Blob([buffer]);
+        break;
+      case 'document':
+        xhr.response = text; // simplified
+        break;
+      default:
+        xhr.response = text;
+    }
+
+    xhr._setReadyState(4); // DONE
+    xhr._fireEvent('load');
+    xhr._fireEvent('loadend');
+  }
+
+  // Synchronous send(): blocks the JS thread on a worker-thread request, so
+  // state and events are updated inline before send() returns. Mirrors the
+  // async path's field population; interception does not apply because a
+  // paused request could only resume from the blocked event loop.
+  _sendSync(url, body) {
+    const xhr = this;
+    const pageOrigin = (function() {
+      try { const u = new URL(_domParse("document_url") || "about:blank"); return u.origin; }
+      catch(e) { return ""; }
+    })();
+    const bodyBytes = _serializeBody(body, xhr._headers);
+    let parsed;
+    try {
+      const raw = __obscuraCore.ops.op_fetch_url_sync(
+        url, xhr._method, JSON.stringify(xhr._headers), bodyBytes,
+        pageOrigin, 'cors', xhr.withCredentials ? 'include' : 'same-origin', false);
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      parsed = { status: 0, body: '', headers: {}, error: String(e) };
+    }
+    if (parsed.blocked || parsed.corsBlocked) {
+      xhr.status = 0;
+      xhr.readyState = 4;
+      xhr._fireEvent('readystatechange');
+      xhr._fireEvent('error');
+      xhr._fireEvent('loadend');
+      if (typeof xhr.onerror === 'function') xhr.onerror(new Error(parsed.corsError || parsed.error || 'network error'));
+      return;
+    }
+    xhr.status = parsed.status || 0;
+    xhr.statusText = '';
+    xhr.responseURL = parsed.url || url;
+    xhr._responseHeaders = parsed.headers || {};
+    xhr._setReadyState(2); // HEADERS_RECEIVED
+    const buffer = parsed.bodyBase64
+      ? _base64ToUint8Array(parsed.bodyBase64).buffer
+      : new TextEncoder().encode(parsed.body || '').buffer;
+    xhr._applyBuffer(buffer);
   }
 
   abort() {
@@ -9826,7 +9948,7 @@ class CustomElementRegistry {
 }
 globalThis.CustomElementRegistry = CustomElementRegistry;
 globalThis.customElements = new CustomElementRegistry();
-globalThis.HTMLUnknownElement = Element;
+
 // ElementInternals: form-associated custom element internals. Validity/state
 // are JS-observable; ARIA reflection that needs the accessibility tree is not.
 globalThis.ElementInternals = class ElementInternals {
@@ -12234,20 +12356,47 @@ globalThis.CSS = {
   escape(s){ return s; }
 };
 
-globalThis.HTMLElement = Element;
-globalThis.HTMLDivElement = Element;
-globalThis.HTMLSpanElement = Element;
-globalThis.HTMLParagraphElement = Element;
-globalThis.HTMLAnchorElement = Element;
+globalThis.HTMLElement = HTMLElement;
+globalThis.HTMLUnknownElement = class HTMLUnknownElement extends HTMLElement {};
+// Every HTML interface gets its own subclass of HTMLElement. Aliases to
+// Element broke Web IDL brand checks (div instanceof HTMLIFrameElement was
+// true), which is how webpack style-loader ended up unable to install
+// stylesheets.
+globalThis.HTMLDivElement = class HTMLDivElement extends HTMLElement {};
+globalThis.HTMLSpanElement = class HTMLSpanElement extends HTMLElement {};
+globalThis.HTMLParagraphElement = class HTMLParagraphElement extends HTMLElement {};
+globalThis.HTMLAnchorElement = class HTMLAnchorElement extends HTMLElement {};
+globalThis.HTMLAreaElement = class HTMLAreaElement extends HTMLElement {};
+globalThis.HTMLBaseElement = class HTMLBaseElement extends HTMLElement {};
+globalThis.HTMLDataElement = class HTMLDataElement extends HTMLElement {};
+globalThis.HTMLDListElement = class HTMLDListElement extends HTMLElement {};
+globalThis.HTMLEmbedElement = class HTMLEmbedElement extends HTMLElement {};
+globalThis.HTMLFontElement = class HTMLFontElement extends HTMLElement {};
+globalThis.HTMLFrameElement = class HTMLFrameElement extends HTMLElement {};
+globalThis.HTMLFrameSetElement = class HTMLFrameSetElement extends HTMLElement {};
+globalThis.HTMLMapElement = class HTMLMapElement extends HTMLElement {};
+globalThis.HTMLMenuElement = class HTMLMenuElement extends HTMLElement {};
+globalThis.HTMLMeterElement = class HTMLMeterElement extends HTMLElement {};
+globalThis.HTMLModElement = class HTMLModElement extends HTMLElement {};
+globalThis.HTMLObjectElement = class HTMLObjectElement extends HTMLElement {};
+globalThis.HTMLOptGroupElement = class HTMLOptGroupElement extends HTMLElement {};
+globalThis.HTMLOutputElement = class HTMLOutputElement extends HTMLElement {};
+globalThis.HTMLPictureElement = class HTMLPictureElement extends HTMLElement {};
+globalThis.HTMLQuoteElement = class HTMLQuoteElement extends HTMLElement {};
+globalThis.HTMLSourceElement = class HTMLSourceElement extends HTMLElement {};
+globalThis.HTMLTableCellElement = class HTMLTableCellElement extends HTMLElement {};
+globalThis.HTMLTableRowElement = class HTMLTableRowElement extends HTMLElement {};
+globalThis.HTMLTableSectionElement = class HTMLTableSectionElement extends HTMLElement {};
+globalThis.HTMLTitleElement = class HTMLTitleElement extends HTMLElement {};
 globalThis.HTMLImageElement = HTMLImageElement;
-globalThis.HTMLInputElement = class HTMLInputElement extends Element {};
+globalThis.HTMLInputElement = class HTMLInputElement extends HTMLElement {};
 // Framework value trackers read own prototype descriptors, not inherited ones.
 Object.defineProperties(HTMLInputElement.prototype, {
   value: Object.getOwnPropertyDescriptor(Element.prototype, 'value'),
   checked: Object.getOwnPropertyDescriptor(Element.prototype, 'checked'),
 });
 globalThis.HTMLButtonElement = Element;
-globalThis.HTMLFormElement = class HTMLFormElement extends Element {
+globalThis.HTMLFormElement = class HTMLFormElement extends HTMLElement {
   get elements() { return HTMLCollection._from(this.querySelectorAll("input, select, textarea, button, fieldset, output, object")); }
   get length() { return this.elements.length; }
   // Inherit submit() from Element.prototype: it dispatches the cancelable
@@ -12269,8 +12418,8 @@ globalThis.HTMLFormElement = class HTMLFormElement extends Element {
     }
   }
 };
-globalThis.HTMLSelectElement = Element;
-globalThis.HTMLTextAreaElement = class HTMLTextAreaElement extends Element {
+globalThis.HTMLSelectElement = class HTMLSelectElement extends HTMLElement {};
+globalThis.HTMLTextAreaElement = class HTMLTextAreaElement extends HTMLElement {
   // `rows`/`cols` reflect the content attributes and drive the control's
   // intrinsic box (the renderer sizes a textarea from them). The attributes
   // are limited to positive non-zero numbers; anything else falls back to the
@@ -12287,29 +12436,29 @@ globalThis.HTMLTextAreaElement = class HTMLTextAreaElement extends Element {
   }
   set cols(v) { this.setAttribute('cols', String(v)); }
 };
-globalThis.HTMLLabelElement = Element;
-globalThis.HTMLTableElement = Element;
-globalThis.HTMLIFrameElement = Element;
-globalThis.HTMLCanvasElement = Element;
-// HTMLVideoElement and HTMLAudioElement are defined above with canPlayType support.
-globalThis.HTMLScriptElement = Element;
-globalThis.HTMLStyleElement = Element;
-globalThis.HTMLLinkElement = Element;
-globalThis.HTMLMetaElement = class HTMLMetaElement extends Element {
+globalThis.HTMLLabelElement = class HTMLLabelElement extends HTMLElement {};
+globalThis.HTMLTableElement = class HTMLTableElement extends HTMLElement {};
+globalThis.HTMLIFrameElement = class HTMLIFrameElement extends HTMLElement {};
+// HTMLCanvasElement, HTMLVideoElement and HTMLAudioElement are real classes
+// defined above with canPlayType/getContext support.
+globalThis.HTMLScriptElement = class HTMLScriptElement extends HTMLElement {};
+globalThis.HTMLStyleElement = class HTMLStyleElement extends HTMLElement {};
+globalThis.HTMLLinkElement = class HTMLLinkElement extends HTMLElement {};
+globalThis.HTMLMetaElement = class HTMLMetaElement extends HTMLElement {
   get httpEquiv() { return this.getAttribute('http-equiv') || ''; }
   set httpEquiv(value) { this.setAttribute('http-equiv', String(value)); }
 };
-globalThis.HTMLHeadElement = Element;
-globalThis.HTMLBodyElement = Element;
-globalThis.HTMLHtmlElement = Element;
-globalThis.HTMLBRElement = Element;
-globalThis.HTMLHRElement = Element;
-globalThis.HTMLUListElement = Element;
-globalThis.HTMLOListElement = Element;
-globalThis.HTMLLIElement = Element;
-globalThis.HTMLPreElement = Element;
-globalThis.HTMLHeadingElement = Element;
-globalThis.HTMLTemplateElement = Element;
+globalThis.HTMLHeadElement = class HTMLHeadElement extends HTMLElement {};
+globalThis.HTMLBodyElement = class HTMLBodyElement extends HTMLElement {};
+globalThis.HTMLHtmlElement = class HTMLHtmlElement extends HTMLElement {};
+globalThis.HTMLBRElement = class HTMLBRElement extends HTMLElement {};
+globalThis.HTMLHRElement = class HTMLHRElement extends HTMLElement {};
+globalThis.HTMLUListElement = class HTMLUListElement extends HTMLElement {};
+globalThis.HTMLOListElement = class HTMLOListElement extends HTMLElement {};
+globalThis.HTMLLIElement = class HTMLLIElement extends HTMLElement {};
+globalThis.HTMLPreElement = class HTMLPreElement extends HTMLElement {};
+globalThis.HTMLHeadingElement = class HTMLHeadingElement extends HTMLElement {};
+globalThis.HTMLTemplateElement = class HTMLTemplateElement extends HTMLElement {};
 // <slot> needs its own brand: with `HTMLSlotElement = Element` every element
 // was an instance, but assignedElements() did not exist, so the common
 // `el instanceof HTMLSlotElement && el.assignedElements()` guard (Swiper's
@@ -12352,19 +12501,19 @@ function _slotAssignedNodes(slot, flatten) {
   }
   return out;
 }
-globalThis.HTMLSlotElement = class HTMLSlotElement extends Element {
+globalThis.HTMLSlotElement = class HTMLSlotElement extends HTMLElement {
   get name() { return this.getAttribute('name') || ''; }
   set name(v) { this.setAttribute('name', String(v)); }
   assignedNodes(options) { return _slotAssignedNodes(this, !!(options && options.flatten)); }
   assignedElements(options) { return this.assignedNodes(options).filter(n => n.nodeType === 1); }
 };
-globalThis.HTMLOptionElement = Element;
-globalThis.HTMLDataListElement = Element;
-globalThis.HTMLFieldSetElement = Element;
-globalThis.HTMLLegendElement = Element;
-globalThis.HTMLProgressElement = Element;
-globalThis.HTMLDetailsElement = Element;
-globalThis.HTMLDialogElement = Element;
+globalThis.HTMLOptionElement = class HTMLOptionElement extends HTMLElement {};
+globalThis.HTMLDataListElement = class HTMLDataListElement extends HTMLElement {};
+globalThis.HTMLFieldSetElement = class HTMLFieldSetElement extends HTMLElement {};
+globalThis.HTMLLegendElement = class HTMLLegendElement extends HTMLElement {};
+globalThis.HTMLProgressElement = class HTMLProgressElement extends HTMLElement {};
+globalThis.HTMLDetailsElement = class HTMLDetailsElement extends HTMLElement {};
+globalThis.HTMLDialogElement = class HTMLDialogElement extends HTMLElement {};
 // SVGAnimatedString backs the className and href reflections on SVG elements.
 // baseVal and animVal both read the live attribute (no SMIL animation), and
 // baseVal is writable. Used by the SVG-aware get className()/get href() above.
@@ -12395,11 +12544,18 @@ class SVGGraphicsElement extends SVGElement {}
 class SVGGeometryElement extends SVGGraphicsElement {}
 class SVGPathElement extends SVGGeometryElement {}
 class SVGSVGElement extends SVGGraphicsElement {}
+// html-to-image and similar DOM-capture libraries reference SVGImageElement /
+// SVGUseElement directly; a bare ReferenceError there aborts the whole capture.
+class SVGImageElement extends SVGGraphicsElement {}
+class SVGUseElement extends SVGGraphicsElement {}
 globalThis.SVGElement = SVGElement;
 globalThis.SVGGraphicsElement = SVGGraphicsElement;
 globalThis.SVGGeometryElement = SVGGeometryElement;
 globalThis.SVGPathElement = SVGPathElement;
 globalThis.SVGSVGElement = SVGSVGElement;
+globalThis.SVGImageElement = SVGImageElement;
+globalThis.SVGUseElement = SVGUseElement;
+globalThis.MathMLElement = MathMLElement;
 globalThis.CharacterData = CharacterData;
 globalThis.Text = Text;
 globalThis.Comment = Comment;
@@ -13925,7 +14081,7 @@ class _Canvas2D {
   getContextAttributes() { return { alpha: true, desynchronized: false, colorSpace: "srgb", willReadFrequently: false }; }
 }
 
-class HTMLCanvasElement extends Element {
+class HTMLCanvasElement extends HTMLElement {
   get width() {
     const raw = this.getAttribute('width');
     const parsed = raw === null ? 300 : Number.parseInt(raw, 10);
